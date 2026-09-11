@@ -93,8 +93,22 @@ class HttpAdapter(Adapter):
             status = exc.code
             body = ""
         except (urllib.error.URLError, OSError) as exc:
-            # Connection refused, DNS failure, timeout, etc.: the check could not run.
-            return CheckResult(status=Status.UNKNOWN, detail="network", metrics={"error": str(exc)})
+            # A refused connection means nothing is listening: that IS a service
+            # failure. A timeout on a loopback address is the service not answering,
+            # also a failure. Anything else (DNS, unreachable network, remote
+            # timeout) means the check could not run: UNKNOWN, never recovery.
+            err = str(exc)
+            host = (urlparse(url).hostname or "").lower()
+            loopback = host in {"127.0.0.1", "localhost", "::1"}
+            refused = "refused" in err.lower()
+            timed_out = "timed out" in err.lower() or isinstance(exc, TimeoutError)
+            if refused or (timed_out and loopback):
+                return CheckResult(
+                    status=Status.FAILED,
+                    detail="connection refused" if refused else "no response (timeout)",
+                    metrics={"error": err},
+                )
+            return CheckResult(status=Status.UNKNOWN, detail="network", metrics={"error": err})
 
         metrics: dict[str, Any] = {"status": status}
         if expect_status and status != expect_status:

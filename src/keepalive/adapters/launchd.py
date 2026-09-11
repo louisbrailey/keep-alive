@@ -212,15 +212,21 @@ class LaunchdAdapter(Adapter):
         return f"gui/{os.getuid()}/{label}"
 
     @staticmethod
+    @staticmethod
     def _parse_print(output: str) -> dict[str, str]:
+        """Top-level keys only (one leading tab). `launchctl print` nests further
+        blocks (e.g. a per-instance `state = active`) that must not override the
+        job's own `state = running`; the FIRST top-level occurrence wins."""
         info: dict[str, str] = {}
-        for raw_line in output.splitlines():
-            line = raw_line.strip()
+        for raw in output.splitlines():
+            if not raw.startswith("\t") or raw.startswith("\t\t"):
+                continue
+            line = raw.strip()
             if "=" not in line:
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
-            if key in {"state", "pid", "last exit code"}:
+            if key in {"state", "pid", "last exit code"} and key not in info:
                 info[key] = value.strip()
         return info
 

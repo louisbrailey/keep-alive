@@ -94,23 +94,34 @@ def test_http_error_status_checked(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert result.metrics["status"] == 503
 
 
-def test_connection_refused_is_unknown(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_connection_refused_is_a_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def _raise(req: Any, timeout: float) -> Any:
         raise urllib.error.URLError(ConnectionRefusedError("refused"))
 
     monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _raise)
     adapter = HttpAdapter({"url": "http://127.0.0.1:8787/health"})
     result = adapter.check(_ctx(tmp_path))
-    assert result.status == Status.UNKNOWN
-    assert result.detail == "network"
+    assert result.status == Status.FAILED  # nothing is listening: the service is down
+    assert result.detail == "connection refused"
 
 
-def test_timeout_is_unknown(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_loopback_timeout_is_a_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def _raise(req: Any, timeout: float) -> Any:
         raise TimeoutError("timed out")
 
     monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _raise)
     adapter = HttpAdapter({"url": "http://127.0.0.1:8787/health"})
+    result = adapter.check(_ctx(tmp_path))
+    assert result.status == Status.FAILED  # a local listener that never answers is down
+    assert result.detail == "no response (timeout)"
+
+
+def test_remote_timeout_is_unknown(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def _raise(req: Any, timeout: float) -> Any:
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _raise)
+    adapter = HttpAdapter({"url": "http://example.invalid/health"})
     result = adapter.check(_ctx(tmp_path))
     assert result.status == Status.UNKNOWN
     assert result.detail == "network"
