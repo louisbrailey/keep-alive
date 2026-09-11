@@ -1,0 +1,128 @@
+# KeepAlive configuration — human-readable, versioned, local-only.
+# Default location: ~/.config/keepalive/config.toml  (override: KEEPALIVE_CONFIG=/path)
+# Secrets are NEVER written here. Reference them by environment-variable NAME (`*_env`).
+
+version = 1
+
+[keepalive]
+mode = "observe"                 # "observe" (default: never acts) | "recover" (acts only where a service enables it)
+poll_interval_s = 60
+state_dir = "~/Library/Application Support/KeepAlive"   # state.json, audit.jsonl, keepalive.lock, KILL
+failure_threshold = 3            # consecutive FAILED/DEGRADED checks before an incident opens (per-service override allowed)
+unknown_threshold = 5            # consecutive UNKNOWN (check could not run) before a check_unavailable incident
+audit_max_bytes = 10_000_000     # rotate audit.jsonl above this size
+
+[notifications]
+macos = false                    # `osascript -e 'display notification …'` (local only)
+webhook = false                  # POST JSON to the URL held in the env var below (never stored here)
+webhook_url_env = "KEEPALIVE_WEBHOOK_URL"
+summary_daily_at = ""            # e.g. "08:00" for one summary notification per day; empty = never
+notify_on = ["incident_opened", "recovered", "circuit_open", "check_unavailable"]
+
+[power]
+observe = true                   # pmset -g batt / pmset -g log (read-only)
+wake_windows = false             # allow bounded `caffeinate -s -w <keepalive pid>` windows
+allow_on_battery = false         # wakefulness windows are AC-only unless you set this explicitly
+max_wake_minutes = 120           # hard bound per window
+# KeepAlive never changes pmset, System Settings, security settings, or power policy.
+
+# ---------------------------------------------------------------------------
+# Services — one [[services]] table per observed thing. Each names an adapter kind.
+# recovery.enabled is false by default; allowed_actions must list the action names
+# the adapter declares (see `keepalive adapters`).
+# ---------------------------------------------------------------------------
+
+[[services]]
+name = "example-http"
+adapter = "http"
+enabled = true
+[services.params]
+url = "http://127.0.0.1:8787/health"
+timeout_s = 5
+expect_status = 200
+[services.recovery]
+enabled = false
+allowed_actions = []             # http adapter declares no actions; observe-only by nature
+cooldown_s = 300
+max_attempts = 3
+backoff_base_s = 30
+backoff_max_s = 900
+circuit_open_s = 3600
+
+[[services]]
+name = "example-launchd-job"
+adapter = "launchd"
+enabled = true
+[services.params]
+label = "com.example.worker"     # gui/<uid>/<label>
+expect_running = true
+handoff_window_s = 90            # a process younger than this after a restart is an expected transition
+[services.recovery]
+enabled = false
+allowed_actions = ["kickstart"]  # only if you turn recovery on
+cooldown_s = 600
+max_attempts = 2
+backoff_base_s = 60
+backoff_max_s = 1800
+circuit_open_s = 7200
+
+[[services]]
+name = "example-process"
+adapter = "process"
+enabled = true
+[services.params]
+pattern = "my-daemon --serve"    # matched against the full command line (pgrep -f semantics)
+pid_file = ""                    # optional; if set, the pid must be alive
+lock_file = ""                   # optional flock path; held lock => instance present
+[services.recovery]
+enabled = false
+allowed_actions = []             # process adapter can only "signal_term" if listed; it never starts anything
+
+[[services]]
+name = "root-disk"
+adapter = "disk"
+enabled = true
+[services.params]
+path = "/"
+warn_free_pct = 15
+fail_free_pct = 5
+
+[[services]]
+name = "nightly-report-freshness"
+adapter = "job_freshness"
+enabled = true
+[services.params]
+kind = "file_mtime"              # "file_mtime" | "sqlite_max" | "command_timestamp"
+target = "~/reports/latest.json"
+max_age_s = 93600                # 26 h
+expected_windows = ["17:30-18:30"]   # optional: only stale outside these local windows
+
+[[services]]
+name = "power"
+adapter = "power"
+enabled = true
+[services.params]
+warn_on_battery = true
+report_sleep = true
+
+# Optional example integration — KeepAlive works without it.
+[[services]]
+name = "signal-forge"
+adapter = "signal_forge"
+enabled = false
+[services.params]
+repo_dir = "~/signal-forge"
+db_path = "~/signal-forge/data/signalforge.sqlite"     # opened read-only (?mode=ro)
+ops_url = "http://127.0.0.1:8787/ops"
+worker_label = "com.signalforge.worker"
+api_label = "com.signalforge.api"
+heartbeat_stale_s = 300
+handoff_window_s = 90
+[services.recovery]
+enabled = false
+allowed_actions = ["restart_worker"]
+cooldown_s = 900
+max_attempts = 2
+backoff_base_s = 120
+backoff_max_s = 1800
+circuit_open_s = 7200

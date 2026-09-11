@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  KeepAlive launchd agent template.
+
+  This file is a reference template only — `keepalive launchd render` is the
+  authoritative source (it substitutes the actual repo path and config path
+  for your machine). Installation is never automatic: review the rendered
+  output, then run `keepalive launchd install --yes` or bootstrap manually.
+
+  No secrets belong in this file. A webhook URL, if used, is read from the
+  environment variable named by `notifications.webhook_url_env` in
+  config.toml, supplied through your own environment/login-item mechanism —
+  never added here.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.keepalive.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__KEEPALIVE_REPO_DIR__/.venv/bin/keepalive</string>
+        <string>run</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>KEEPALIVE_CONFIG</key>
+        <string>__KEEPALIVE_CONFIG_PATH__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/keepalive/keepalive.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/keepalive/keepalive.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,76 @@
+[project]
+name = "keepalive"
+version = "0.1.0"
+description = "Local macOS reliability service: observe services and workflows, detect actionable failures, apply only explicitly allowed bounded recovery, notify when intervention is needed."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+]
+
+[project.scripts]
+keepalive = "keepalive.cli:app"
+
+[project.entry-points."keepalive.adapters"]
+process = "keepalive.adapters.process:ProcessAdapter"
+http = "keepalive.adapters.http:HttpAdapter"
+launchd = "keepalive.adapters.launchd:LaunchdAdapter"
+disk = "keepalive.adapters.disk:DiskAdapter"
+job_freshness = "keepalive.adapters.job_freshness:JobFreshnessAdapter"
+power = "keepalive.adapters.power:PowerAdapter"
+signal_forge = "keepalive.integrations.signal_forge.adapter:SignalForgeAdapter"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "black>=24.4",
+    "mypy>=1.10",
+    "bandit>=1.7.9",
+    "detect-secrets>=1.5",
+]
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/keepalive"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "N", "RUF", "SIM", "PL"]
+ignore = ["PLR0913", "PLR2004", "S101", "S603", "S607", "PLR0912", "PLR0915", "PLR0911"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "PL", "SIM"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["typer.*", "rich.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=keepalive --cov-report=term-missing:skip-covered"
+pythonpath = ["src"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101", "B404", "B603", "B607"]
