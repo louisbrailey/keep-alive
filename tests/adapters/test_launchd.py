@@ -10,15 +10,19 @@ import pytest
 
 from keepalive.adapters.launchd import LaunchdAdapter
 from keepalive.core.adapter import CheckContext, Status
+from keepalive.core.timeutil import ensure_aware, now_aware
 
 LABEL = "com.example.worker"
 
 
 def _ctx(tmp_path: Path, *, now: datetime, dry_run: bool = False) -> CheckContext:
+    # ctx.now is contractually always aware in production (the engine sets it
+    # via now_aware()); coerce here so every test below exercises the real
+    # invariant even when it's handed a bare naive literal.
     return CheckContext(
         service_name="svc",
         params={},
-        now=now,
+        now=ensure_aware(now, "local"),
         on_ac_power=True,
         slept_since_last_cycle=False,
         last_cycle_at=None,
@@ -129,7 +133,38 @@ def test_handoff_window_is_expected_transition(
     assert result.status == Status.EXPECTED_TRANSITION
     assert result.instance_present is True
     assert result.handoff_until is not None
-    assert result.handoff_until > now
+    assert result.handoff_until > ensure_aware(now, "local")
+
+
+def test_handoff_age_from_lstart_is_computed_against_local_zone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: `ps -o lstart=` reports naive LOCAL wall-clock time, while
+    ctx.now is contractually aware (keepalive.core.timeutil). Before the fix,
+    the two were subtracted directly -- naive-vs-aware raises TypeError, and
+    would otherwise (if both happened to be naive) silently misread the age
+    whenever local and UTC diverge. Anchored to the real current instant so
+    this is correct under any system zone, not just a hardcoded one."""
+    aware_now = now_aware()
+    handoff_window_s = 90
+    age_s = 45.0  # inside the handoff window
+    started_local_naive = aware_now.astimezone().replace(tzinfo=None) - timedelta(seconds=age_s)
+    monkeypatch.setattr(
+        "keepalive.adapters.launchd.subprocess.run",
+        _fake_run(
+            print_stdout=_print_output(state="running", pid=4242),
+            lstart=started_local_naive.strftime("%a %b %d %H:%M:%S %Y"),
+        ),
+    )
+    adapter = LaunchdAdapter(
+        {"label": LABEL, "expect_running": True, "handoff_window_s": handoff_window_s}
+    )
+    result = adapter.check(_ctx(tmp_path, now=aware_now))
+
+    assert result.status == Status.EXPECTED_TRANSITION
+    assert result.handoff_until is not None
+    expected_handoff_until = aware_now + timedelta(seconds=handoff_window_s - age_s)
+    assert abs((result.handoff_until - expected_handoff_until).total_seconds()) < 2
 
 
 def test_kickstart_runs_launchctl(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

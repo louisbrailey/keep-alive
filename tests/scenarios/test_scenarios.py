@@ -34,7 +34,12 @@ from keepalive.core.lock import InstanceLock
 from keepalive.core.power import PowerState
 from keepalive.core.state import StateStore
 
-NOW = datetime(2026, 1, 1, 12, 0, 0)
+#  Timezone-aware: production `run_cycle` always receives an aware `now`
+#  (keepalive.core.timeutil.now_aware()) and persists/reloads incident
+#  timestamps aware too, so a naive NOW here would raise TypeError the moment
+#  a second cycle compares a reloaded (now-aware) cooldown_until/next_retry_at
+#  against it.
+NOW = datetime(2026, 1, 1, 12, 0, 0).astimezone()
 
 
 class RecordingNotifier:

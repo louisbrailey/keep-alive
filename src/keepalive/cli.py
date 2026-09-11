@@ -36,6 +36,7 @@ from keepalive.core.notify import Notifier
 from keepalive.core.power import PowerObserver
 from keepalive.core.registry import list_adapters
 from keepalive.core.state import Incident, ServiceState, StateStore
+from keepalive.core.timeutil import now_aware
 
 app = typer.Typer(
     name="keepalive",
@@ -288,7 +289,7 @@ def status(
 
 
 def _build_summary_message(cfg: Config, states: dict[str, ServiceState]) -> tuple[str, str]:
-    now = datetime.now()
+    now = now_aware()
     enabled = [service for service in cfg.services if service.enabled]
     status_counts: dict[str, int] = {}
     incidents_open = 0

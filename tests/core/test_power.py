@@ -13,6 +13,16 @@ import pytest
 from keepalive.core.audit import AuditLog
 from keepalive.core.config import PowerSettings
 from keepalive.core.power import PowerObserver, WakeWindow
+from keepalive.core.timeutil import ensure_aware
+
+
+def _local(*args: int) -> datetime:
+    """A timezone-aware local datetime built from plain (y, m, d, h, mi, s)
+    components -- PowerObserver.observe()'s `now`/`last_cycle_at` (and the
+    pmset-log-derived timestamps it returns) are contractually aware, same as
+    every other datetime crossing a module boundary (keepalive.core.timeutil)."""
+    return ensure_aware(datetime(*args), "local")
+
 
 _BATT_ON_AC = "Now drawing from 'AC Power'\n -InternalBattery-0\t85%; charged; 0:00 remaining\n"
 _BATT_ON_BATTERY = (
@@ -48,7 +58,7 @@ def _fake_run(batt_output: str | None, log_output: str | None) -> Any:
 
 def test_observe_disabled_returns_all_unknown(tmp_path: Path) -> None:
     observer = PowerObserver(_settings(observe=False), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.on_ac is None
     assert state.battery_pct is None
     assert state.slept_since_last is False
@@ -60,7 +70,7 @@ def test_observe_on_ac_power(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         "keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_AC, _LOG_NO_EVENTS)
     )
     observer = PowerObserver(_settings(), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.on_ac is True
     assert state.battery_pct == 85
 
@@ -70,7 +80,7 @@ def test_observe_on_battery(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
         "keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_BATTERY, _LOG_NO_EVENTS)
     )
     observer = PowerObserver(_settings(), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.on_ac is False
     assert state.battery_pct == 42
 
@@ -80,7 +90,7 @@ def test_observe_pmset_batt_unavailable_is_none_not_raise(
 ) -> None:
     monkeypatch.setattr("keepalive.core.power.subprocess.run", _fake_run(None, _LOG_NO_EVENTS))
     observer = PowerObserver(_settings(), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.on_ac is None
     assert state.battery_pct is None
     assert "unavailable" in state.detail
@@ -94,7 +104,7 @@ def test_observe_subprocess_oserror_is_tolerated(
 
     monkeypatch.setattr("keepalive.core.power.subprocess.run", raise_oserror)
     observer = PowerObserver(_settings(), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.on_ac is None
 
 
@@ -106,7 +116,7 @@ def test_observe_subprocess_timeout_is_tolerated(
 
     monkeypatch.setattr("keepalive.core.power.subprocess.run", raise_timeout)
     observer = PowerObserver(_settings(), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.on_ac is None
 
 
@@ -117,12 +127,12 @@ def test_observe_detects_sleep_since_last_cycle(
         "keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_AC, _LOG_WITH_SLEEP_AND_WAKE)
     )
     observer = PowerObserver(_settings(), tmp_path)
-    last_cycle_at = datetime(2026, 1, 1, 9, 0, 0)
-    now = datetime(2026, 1, 1, 11, 0, 0)
+    last_cycle_at = _local(2026, 1, 1, 9, 0, 0)
+    now = _local(2026, 1, 1, 11, 0, 0)
     state = observer.observe(now, last_cycle_at)
     assert state.slept_since_last is True
-    assert state.last_sleep_at == datetime(2026, 1, 1, 10, 0, 0)
-    assert state.last_wake_at == datetime(2026, 1, 1, 10, 5, 0)
+    assert state.last_sleep_at == _local(2026, 1, 1, 10, 0, 0)
+    assert state.last_wake_at == _local(2026, 1, 1, 10, 5, 0)
 
 
 def test_observe_no_sleep_events_in_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -130,7 +140,7 @@ def test_observe_no_sleep_events_in_window(monkeypatch: pytest.MonkeyPatch, tmp_
         "keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_AC, _LOG_NO_EVENTS)
     )
     observer = PowerObserver(_settings(), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.slept_since_last is False
     assert state.last_sleep_at is None
 
@@ -144,8 +154,8 @@ def test_observe_ignores_sleep_events_before_last_cycle(
         "keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_AC, _LOG_WITH_SLEEP_AND_WAKE)
     )
     observer = PowerObserver(_settings(), tmp_path)
-    last_cycle_at = datetime(2026, 1, 1, 12, 0, 0)  # after both log events
-    now = datetime(2026, 1, 1, 13, 0, 0)
+    last_cycle_at = _local(2026, 1, 1, 12, 0, 0)  # after both log events
+    now = _local(2026, 1, 1, 13, 0, 0)
     state = observer.observe(now, last_cycle_at)
     assert state.slept_since_last is False
 
@@ -157,7 +167,7 @@ def test_observe_ignores_sleep_events_after_now(
         "keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_AC, _LOG_WITH_SLEEP_AND_WAKE)
     )
     observer = PowerObserver(_settings(), tmp_path)
-    now = datetime(2026, 1, 1, 9, 0, 0)  # before both log events
+    now = _local(2026, 1, 1, 9, 0, 0)  # before both log events
     state = observer.observe(now, None)
     assert state.slept_since_last is False
 
@@ -167,9 +177,31 @@ def test_observe_pmset_log_unavailable_is_tolerated(
 ) -> None:
     monkeypatch.setattr("keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_AC, None))
     observer = PowerObserver(_settings(), tmp_path)
-    state = observer.observe(datetime(2026, 1, 1), None)
+    state = observer.observe(_local(2026, 1, 1), None)
     assert state.slept_since_last is False
     assert "log unavailable" in state.detail
+
+
+def test_observe_first_cycle_ever_never_reports_slept_even_with_sleep_in_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: on the very first cycle (no persisted last_cycle_at yet),
+    pmset -g log may still list sleep/wake events from hours or days before
+    KeepAlive ever started watching. With no reference point to compare
+    against, none of that history counts as "slept since last cycle" -- the
+    old behavior treated an absent last_cycle_at as "no lower bound", so any
+    past sleep event (as long as it was before `now`) incorrectly marked
+    every treat_wake_as_transition service as EXPECTED_TRANSITION on
+    KeepAlive's first-ever run."""
+    monkeypatch.setattr(
+        "keepalive.core.power.subprocess.run", _fake_run(_BATT_ON_AC, _LOG_WITH_SLEEP_AND_WAKE)
+    )
+    observer = PowerObserver(_settings(), tmp_path)
+    # `now` is well after both logged sleep/wake events, so they'd pass the
+    # pre-fix "ts > now" filter and be (wrongly) reported as recent.
+    now = _local(2026, 1, 2, 9, 0, 0)
+    state = observer.observe(now, last_cycle_at=None)
+    assert state.slept_since_last is False
 
 
 # --- WakeWindow -------------------------------------------------------------

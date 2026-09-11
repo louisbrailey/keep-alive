@@ -81,7 +81,7 @@ installed adapter. Summary of the built-ins:
 | `http` | `url`, `timeout_s`, `expect_status` | none — observe-only by nature | |
 | `launchd` | `label`, `expect_running`, `handoff_window_s` | `kickstart` | Refused while `instance_present`/`lock_held`/within `handoff_window_s` of a restart. |
 | `disk` | `path`, `warn_free_pct`, `fail_free_pct` | none | |
-| `job_freshness` | `kind` (`file_mtime` \| `sqlite_max` \| `command_timestamp`), `target`, `max_age_s`, `expected_windows` | none | `expected_windows` (e.g. `"17:30-18:30"`) suppresses staleness alerts inside expected gaps. |
+| `job_freshness` | `kind` (`file_mtime` \| `sqlite_max` \| `command_timestamp`), `target`, `max_age_s`, `expected_windows`, `naive_tz` | none | `expected_windows` (e.g. `"17:30-18:30"`) are local wall-clock time-of-day ranges and suppress staleness alerts inside expected gaps. `naive_tz` (`"utc"`, the default, or `"local"`) says how to interpret a `sqlite_max`/`command_timestamp` timestamp that carries no UTC offset; a `file_mtime` age is always computed from an unambiguous epoch and ignores it. |
 | `power` | `warn_on_battery`, `report_sleep` | none | Surfaces AC/battery and sleep/wake as a service, independent of the `[power]` section which drives KeepAlive's own behavior. |
 | `signal_forge` (optional) | `repo_dir`, `db_path`, `ops_url`, `worker_label`, `api_label`, `heartbeat_stale_s`, `handoff_window_s` | `restart_worker` | Disabled (`enabled = false`) in the example config; read-only against Signal Forge's DB (`?mode=ro`) and `/ops` endpoint. See `ARCHITECTURE.md` §2.7. |
 

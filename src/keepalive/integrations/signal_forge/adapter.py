@@ -39,6 +39,7 @@ from keepalive.core.adapter import (
     NotifyCondition,
     Status,
 )
+from keepalive.core.timeutil import age_seconds, ensure_aware
 
 _LAUNCHCTL = "/bin/launchctl"
 _TIMEOUT_LAUNCHCTL_S = 5
@@ -54,13 +55,14 @@ _ACTIVE_JOB_QUERY = "SELECT COUNT(*) FROM job_run WHERE status = 'running'"
 _FRESHNESS_QUERY = "SELECT MAX(session_date) FROM ohlcv_daily WHERE source = 'massive'"
 
 
-def _as_aware(dt: datetime) -> datetime:
-    """Normalize a possibly-naive datetime to aware UTC for safe subtraction."""
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-
-
 def _parse_ts(value: Any) -> datetime | None:
-    """Best-effort parse of a heartbeat timestamp column (ISO string or epoch)."""
+    """Best-effort parse of a heartbeat timestamp column (ISO string or epoch).
+
+    Signal Forge persists these columns as naive UTC (no offset); a naive
+    result is therefore assumed UTC, never the engine's local zone. A value
+    that already carries an offset (e.g. a "Z"-suffixed or "+00:00" string)
+    is trusted as-is.
+    """
     if value is None:
         return None
     if isinstance(value, int | float):
@@ -76,7 +78,7 @@ def _parse_ts(value: Any) -> datetime | None:
                 return datetime.fromtimestamp(float(text), tz=UTC)
             except ValueError:
                 return None
-        return _as_aware(dt)
+        return ensure_aware(dt, "utc")
     return None
 
 
@@ -358,16 +360,18 @@ class SignalForgeAdapter(Adapter):
                 active_job=active_job,
             )
 
-        now = _as_aware(ctx.now)
+        # ctx.now is contractually aware already; the fallback assumption only
+        # matters if this adapter is ever invoked directly with a naive `now`.
+        now = ensure_aware(ctx.now, "local")
 
         heartbeat_age_s: float | None = None
         if hb.last_beat_at is not None:
-            heartbeat_age_s = (now - hb.last_beat_at).total_seconds()
+            heartbeat_age_s = age_seconds(now, hb.last_beat_at)
         metrics["heartbeat_age_s"] = heartbeat_age_s
 
         process_age_s: float | None = None
         if hb.started_at is not None:
-            process_age_s = (now - hb.started_at).total_seconds()
+            process_age_s = age_seconds(now, hb.started_at)
         metrics["process_age_s"] = process_age_s
 
         handoff_active = process_age_s is not None and 0 <= process_age_s < handoff_window_s
@@ -430,8 +434,8 @@ class SignalForgeAdapter(Adapter):
             return ActionResult(ok=False, detail="refused: worker lock is held by a live process")
 
         if hb.started_at is not None:
-            now = _as_aware(ctx.now)
-            process_age_s = (now - hb.started_at).total_seconds()
+            now = ensure_aware(ctx.now, "local")
+            process_age_s = age_seconds(now, hb.started_at)
             if 0 <= process_age_s < handoff_window_s:
                 return ActionResult(ok=False, detail="refused: worker handoff already in progress")
 

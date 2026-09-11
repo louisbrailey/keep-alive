@@ -22,7 +22,10 @@ from keepalive.core.notify import Notifier
 from keepalive.core.state import StateStore
 from tests.conftest import FakeAdapter
 
-NOW = datetime(2026, 1, 1, 12, 0, 0)
+# Timezone-aware: production run_cycle always receives an aware `now`
+# (keepalive.core.timeutil.now_aware()); see tests/core/test_timeutil.py and
+# the scenario test suite for the regression a naive NOW here would miss.
+NOW = datetime(2026, 1, 1, 12, 0, 0).astimezone()
 
 
 def _settings(tmp_path: Path, **overrides: Any) -> KeepAliveSettings:
@@ -384,6 +387,58 @@ def test_meta_records_last_cycle_at(tmp_path: Path) -> None:
     assert reloaded.meta["last_cycle_at"] == NOW.isoformat()
 
 
+def test_default_now_is_aware_and_state_persists_and_reloads_timestamps_aware(
+    tmp_path: Path,
+) -> None:
+    """Regression: run_cycle's default `now` (used whenever the caller
+    doesn't pass one -- every real invocation from cli.py/run_loop) must be
+    timezone-aware, and every timestamp persisted to state.json must
+    round-trip as aware too. Before this fix, `cycle_now = datetime.now()`
+    was naive; a *second* real cycle would then compare a freshly-reloaded
+    (now upgraded-to-aware) incident timestamp against a naive `now`, raising
+    TypeError mid-cycle (see tests/scenarios/test_scenarios.py's
+    cooldown/backoff/circuit test for the multi-cycle version of this)."""
+    adapter = FakeAdapter({})
+    adapter.results = [CheckResult(status=Status.FAILED), CheckResult(status=Status.FAILED)]
+    service = _service(
+        recovery=RecoveryPolicy(enabled=True, allowed_actions=["restart"], max_attempts=3)
+    )
+    config = _config(tmp_path, [service], mode="recover", failure_threshold=1)
+    state_store, audit, notifier = _rig(tmp_path)
+
+    # No `now=` passed: exercises the real default (now_aware()).
+    run_cycle(
+        config,
+        state_store=state_store,
+        audit=audit,
+        notifier=notifier,
+        adapter_factory=lambda _svc: adapter,
+    )
+
+    reloaded = StateStore(tmp_path / "state.json")
+    states = reloaded.load()
+    assert datetime.fromisoformat(reloaded.meta["last_cycle_at"]).tzinfo is not None
+
+    incident = states["svc"].incident
+    assert incident is not None
+    assert incident.opened_at.tzinfo is not None
+    assert incident.cooldown_until is not None
+    assert incident.cooldown_until.tzinfo is not None
+    assert incident.next_retry_at is not None
+    assert incident.next_retry_at.tzinfo is not None
+
+    # A second real cycle must not raise comparing the reloaded, now-aware
+    # incident timestamps against the next (also default, aware) `now`.
+    report2 = run_cycle(
+        config,
+        state_store=state_store,
+        audit=audit,
+        notifier=notifier,
+        adapter_factory=lambda _svc: adapter,
+    )
+    assert report2.ran is True
+
+
 def test_audit_records_check_and_decision_events(tmp_path: Path) -> None:
     adapter = FakeAdapter({})
     adapter.results = [CheckResult(status=Status.OK)]
@@ -528,3 +583,59 @@ def test_recover_raising_is_recorded_as_a_failed_action_not_a_crash(tmp_path: Pa
     assert incident is not None
     assert incident.last_action_ok is False
     assert "recover boom" in incident.last_action_detail
+
+
+def test_default_now_is_aware_and_state_persists_offsets_reloaded_aware(
+    tmp_path: Path,
+) -> None:
+    """Regression: run_cycle()'s default `now` (no `now=` argument, the real
+    path `keepalive run`/`keepalive check` take) must be timezone-aware
+    (keepalive.core.timeutil.now_aware()), like every other datetime crossing
+    a module boundary. A naive default here is exactly the bug that produced
+    a negative heartbeat age in the Signal Forge adapter's live smoke test.
+    Persisted timestamps must therefore carry a UTC offset, StateStore must
+    reload them aware, and a second cycle (also with no explicit `now`) must
+    not raise TypeError comparing the reloaded aware incident fields against
+    a freshly aware `now`."""
+    adapter = FakeAdapter({})
+    adapter.results = [CheckResult(status=Status.FAILED, detail="down")]
+    service = _service(
+        recovery=RecoveryPolicy(enabled=True, allowed_actions=["restart"], max_attempts=3)
+    )
+    config = _config(tmp_path, [service], mode="recover", failure_threshold=1)
+    state_store, audit, notifier = _rig(tmp_path)
+
+    report = run_cycle(
+        config,
+        state_store=state_store,
+        audit=audit,
+        notifier=notifier,
+        adapter_factory=lambda _svc: adapter,
+    )
+    assert report.ran is True
+
+    reloaded_meta_store = StateStore(tmp_path / "state.json")
+    reloaded_meta_store.load()
+    persisted_now = datetime.fromisoformat(reloaded_meta_store.meta["last_cycle_at"])
+    assert persisted_now.tzinfo is not None
+    assert persisted_now.utcoffset() is not None
+
+    reloaded_states = state_store.load()
+    incident = reloaded_states["svc"].incident
+    assert incident is not None
+    assert incident.cooldown_until is not None
+    assert incident.cooldown_until.tzinfo is not None
+    assert incident.next_retry_at is not None
+    assert incident.next_retry_at.tzinfo is not None
+
+    # Must not raise: the reloaded (now-aware) incident's cooldown_until and
+    # next_retry_at get compared against a freshly aware `now` inside decide().
+    second_report = run_cycle(
+        config,
+        state_store=state_store,
+        audit=audit,
+        notifier=notifier,
+        adapter_factory=lambda _svc: adapter,
+    )
+    assert second_report.ran is True
+    assert second_report.services[0]["decision"] in ("wait", "attempt")

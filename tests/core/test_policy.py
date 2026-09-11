@@ -6,7 +6,7 @@ no adapters, no engine.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -189,6 +189,30 @@ def test_expected_transition_future_is_wait_and_not_counted() -> None:
     assert decision.kind == "wait"
     assert decision.reason == "expected_transition"
     assert decision.state.consecutive_failures == 0
+
+
+def test_expected_transition_future_aware_datetimes_do_not_raise() -> None:
+    """Regression: decide() must never raise TypeError when the adapter's
+    `transition_until` and the caller's `now` are both timezone-aware (the
+    normal case in production, since keepalive.core.timeutil guarantees every
+    datetime crossing a module boundary is aware) -- policy.py performs bare
+    `>`/`<` comparisons on whatever it's handed, so mixing a naive and an
+    aware datetime anywhere in this call would crash a cycle."""
+    aware_now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    state = _state(consecutive_failures=0)
+    result = _result(Status.EXPECTED_TRANSITION, transition_until=aware_now + timedelta(seconds=60))
+    decision = decide(
+        state,
+        result,
+        _policy(),
+        _settings(),
+        _MANIFEST,
+        aware_now,
+        kill_switch=False,
+        mode="observe",
+    )
+    assert decision.kind == "wait"
+    assert decision.reason == "expected_transition"
 
 
 def test_expected_transition_expired_is_treated_as_failure() -> None:
@@ -997,3 +1021,63 @@ def test_decision_kind_is_validated() -> None:
 
     with pytest.raises(AssertionError):
         Decision(kind="bogus", action=None, reason="x", notify=None, state=_state())
+
+
+# --- timezone-aware inputs never raise TypeError ------------------------
+#
+# decide() is pure and does no timezone normalization of its own (that is
+# the caller's job -- see keepalive.core.timeutil, and engine.py/state.py
+# which now always hand it aware datetimes). These regressions pin down that
+# a fully-aware call -- aware `now`, an aware EXPECTED_TRANSITION
+# `transition_until` from the adapter, and an aware pre-existing incident
+# loaded from persisted state -- never raises
+# "TypeError: can't compare offset-naive and offset-aware datetimes", which
+# would otherwise crash an entire cycle.
+
+_AWARE_NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def test_decide_expected_transition_with_aware_now_and_transition_until() -> None:
+    state = _state()
+    result = _result(
+        Status.EXPECTED_TRANSITION, transition_until=_AWARE_NOW + timedelta(seconds=30)
+    )
+    decision = decide(
+        state,
+        result,
+        _policy(),
+        _settings(),
+        _MANIFEST,
+        _AWARE_NOW,
+        kill_switch=False,
+        mode="recover",
+    )
+    assert decision.kind == "wait"
+    assert decision.reason == "expected_transition"
+
+
+def test_decide_walks_full_aware_incident_lifecycle_without_typeerror() -> None:
+    incident = Incident(
+        kind="failure",
+        opened_at=_AWARE_NOW - timedelta(minutes=5),
+        attempts=1,
+        next_retry_at=_AWARE_NOW - timedelta(seconds=1),  # backoff already elapsed
+        cooldown_until=_AWARE_NOW - timedelta(seconds=1),  # cooldown already elapsed
+        circuit_open_until=None,
+        notified_opened=True,
+    )
+    state = _state(incident=incident, consecutive_failures=3)
+    decision = decide(
+        state,
+        _result(Status.FAILED),
+        _policy(max_attempts=3),
+        _settings(),
+        _MANIFEST,
+        _AWARE_NOW,
+        kill_switch=False,
+        mode="recover",
+    )
+    assert decision.kind == "attempt"
+    assert decision.state.incident is not None
+    assert decision.state.incident.cooldown_until is not None
+    assert decision.state.incident.cooldown_until > _AWARE_NOW

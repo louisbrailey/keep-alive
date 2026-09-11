@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from keepalive.core.timeutil import ensure_aware
+
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
@@ -25,8 +27,10 @@ def _parse_dt(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(str(value))
+        return ensure_aware(value, "local")
+    # A legacy naive-local ISO string, persisted before timestamps became
+    # aware everywhere (see keepalive.core.timeutil), is assumed local.
+    return ensure_aware(datetime.fromisoformat(str(value)), "local")
 
 
 @dataclass(slots=True)

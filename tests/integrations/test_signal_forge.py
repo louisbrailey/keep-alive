@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -294,3 +294,91 @@ def test_lock_probe_detects_held_lock(tmp_path: Path) -> None:
     finally:
         fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
         fd.close()
+
+
+# --- naive-UTC-vs-aware-non-UTC regression --------------------------------------
+#
+# The live smoke test that found this bug: the engine's `cycle_now` was
+# `datetime.now()` (naive local), and this adapter's own `_as_aware()` wrongly
+# assumed a naive datetime meant UTC. Signal Forge stores worker_heartbeat
+# timestamps as naive UTC ISO strings. A fresh heartbeat therefore reported
+# `heartbeat_age_s` of roughly *minus* the local UTC offset (~-25173s observed
+# in a UTC-7 zone) instead of ~0 -- a stale heartbeat would have been
+# invisible for hours in any zone west of UTC. These tests build the DB rows
+# directly (rather than via `_make_db`, which stores offset-carrying strings
+# from the module's aware `NOW`) so `last_beat_at`/`started_at` are exactly
+# what Signal Forge really writes: naive, no offset, UTC wall-clock.
+
+
+def _make_naive_utc_heartbeat_db(
+    tmp_path: Path, *, now_utc_naive: datetime, last_beat_age_s: float, started_age_s: float
+) -> Path:
+    db_path = tmp_path / "signalforge.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "CREATE TABLE worker_heartbeat ("
+            "worker TEXT, host TEXT, pid INTEGER, started_at TEXT, last_beat_at TEXT, "
+            "next_runs_json TEXT, detail TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE job_run (name TEXT, started_at TEXT, finished_at TEXT, "
+            "status TEXT, detail TEXT)"
+        )
+        conn.execute("CREATE TABLE ohlcv_daily (session_date TEXT, source TEXT, symbol TEXT)")
+        conn.execute(
+            "INSERT INTO worker_heartbeat "
+            "(worker, host, pid, started_at, last_beat_at, next_runs_json, detail) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "worker",
+                "localhost",
+                4242,
+                (now_utc_naive - timedelta(seconds=started_age_s)).isoformat(),
+                (now_utc_naive - timedelta(seconds=last_beat_age_s)).isoformat(),
+                "{}",
+                "ok",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+def test_fresh_heartbeat_naive_utc_string_correct_age_from_aware_nonutc_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sf_adapter.subprocess, "run", _fake_launchctl_running())
+    now_nonutc = datetime.now(timezone(timedelta(hours=-7)))
+    now_utc_naive = now_nonutc.astimezone(UTC).replace(tzinfo=None)
+    db_path = _make_naive_utc_heartbeat_db(
+        tmp_path, now_utc_naive=now_utc_naive, last_beat_age_s=60, started_age_s=7200
+    )
+    adapter = _adapter(tmp_path, db_path)
+
+    result = adapter.check(_ctx(now=now_nonutc))
+
+    assert result.status == Status.OK
+    age = result.metrics["heartbeat_age_s"]
+    assert age is not None
+    assert 55 <= age <= 65
+
+
+def test_stale_heartbeat_naive_utc_string_correct_age_from_aware_nonutc_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sf_adapter.subprocess, "run", _fake_launchctl_running())
+    now_nonutc = datetime.now(timezone(timedelta(hours=-7)))
+    now_utc_naive = now_nonutc.astimezone(UTC).replace(tzinfo=None)
+    db_path = _make_naive_utc_heartbeat_db(
+        tmp_path, now_utc_naive=now_utc_naive, last_beat_age_s=3600, started_age_s=7200
+    )
+    adapter = _adapter(tmp_path, db_path)
+
+    result = adapter.check(_ctx(now=now_nonutc))
+
+    assert result.status == Status.FAILED
+    age = result.metrics["heartbeat_age_s"]
+    assert age is not None
+    assert 3595 <= age <= 3605

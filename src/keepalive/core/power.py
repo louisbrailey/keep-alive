@@ -23,6 +23,7 @@ from pathlib import Path
 
 from keepalive.core.audit import AuditLog
 from keepalive.core.config import PowerSettings
+from keepalive.core.timeutil import ensure_aware
 
 _PMSET = "/usr/bin/pmset"
 _CAFFEINATE = "/usr/bin/caffeinate"
@@ -108,13 +109,20 @@ class PowerObserver:
         output = _run([_PMSET, "-g", "log"])
         if output is None:
             return False, None, None, "pmset -g log unavailable"
+        if last_cycle_at is None:
+            # First cycle ever: there is no reference point to compare
+            # against, so nothing in the log -- however recent -- counts as
+            # "slept since last cycle" (it may predate KeepAlive entirely).
+            return False, None, None, ""
         last_sleep: datetime | None = None
         last_wake: datetime | None = None
         for line in output.splitlines():
-            ts = _parse_log_timestamp(line)
-            if ts is None or ts > now:
+            parsed = _parse_log_timestamp(line)
+            if parsed is None:
                 continue
-            if last_cycle_at is not None and ts < last_cycle_at:
+            # pmset -g log timestamps are naive local wall-clock time.
+            ts = ensure_aware(parsed, "local")
+            if ts > now or ts < last_cycle_at:
                 continue
             is_sleep_line = "Sleep" in line and "DarkWake" not in line
             if is_sleep_line and (last_sleep is None or ts > last_sleep):

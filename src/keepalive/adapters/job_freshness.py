@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from urllib.parse import quote
 
 from keepalive.core.adapter import (
@@ -26,8 +26,10 @@ from keepalive.core.adapter import (
     NotifyCondition,
     Status,
 )
+from keepalive.core.timeutil import Assumption, age_seconds, ensure_aware
 
 _KINDS = ("file_mtime", "sqlite_max", "command_timestamp")
+_NAIVE_TZ_VALUES = ("utc", "local")
 _SUBPROCESS_TIMEOUT_S = 10
 
 
@@ -50,27 +52,34 @@ def _in_window(now_t: time, start: time, end: time) -> bool:
 
 
 def _window_end_today(now: datetime, end: time) -> datetime:
-    end_dt = datetime.combine(now.date(), end)
+    end_dt = datetime.combine(now.date(), end, tzinfo=now.tzinfo)
     if end_dt < now:
         end_dt += timedelta(days=1)
     return end_dt
 
 
-def _parse_timestamp(value: object) -> datetime:
+def _parse_timestamp(value: object, naive_tz: Assumption) -> datetime:
+    """Parse a freshness timestamp, returning it timezone-aware.
+
+    A numeric epoch is unambiguous (always UTC-based) regardless of
+    `naive_tz`. A naive `datetime`/`date`/ISO string is ambiguous -- it is
+    interpreted under the `naive_tz` assumption (see `JobFreshnessAdapter`'s
+    `naive_tz` param).
+    """
     if isinstance(value, datetime):
-        return value
+        return ensure_aware(value, naive_tz)
     if isinstance(value, date):
-        return datetime.combine(value, time.min)
+        return ensure_aware(datetime.combine(value, time.min), naive_tz)
     if isinstance(value, int | float):
-        return datetime.fromtimestamp(value)
+        return datetime.fromtimestamp(value, tz=UTC)
     if isinstance(value, str):
         text = value.strip()
         try:
-            return datetime.fromisoformat(text)
+            return ensure_aware(datetime.fromisoformat(text), naive_tz)
         except ValueError:
             pass
         try:
-            return datetime.combine(date.fromisoformat(text), time.min)
+            return ensure_aware(datetime.combine(date.fromisoformat(text), time.min), naive_tz)
         except ValueError as exc:
             raise JobFreshnessError(f"unparseable timestamp {value!r}") from exc
     raise JobFreshnessError(f"unparseable timestamp {value!r}")
@@ -126,6 +135,12 @@ class JobFreshnessAdapter(Adapter):
                     'Optional list of local "HH:MM-HH:MM" windows tolerating staleness.'
                 ),
                 "sql": "sqlite_max only: a read-only SELECT returning one ISO timestamp or date.",
+                "naive_tz": (
+                    "sqlite_max/command_timestamp only: how to interpret a naive (no UTC "
+                    "offset) timestamp -- 'utc' (default) or 'local'. Ignored for file_mtime "
+                    "(an mtime is always an unambiguous epoch) and for numeric timestamps "
+                    "(also unambiguous)."
+                ),
             },
         )
 
@@ -158,7 +173,13 @@ class JobFreshnessAdapter(Adapter):
                     _validate_select(sql)
                 except JobFreshnessError as exc:
                     problems.append(str(exc))
+        naive_tz = self.params.get("naive_tz", "utc")
+        if naive_tz not in _NAIVE_TZ_VALUES:
+            problems.append(f"'naive_tz' must be one of {_NAIVE_TZ_VALUES}, got {naive_tz!r}")
         return problems
+
+    def _naive_tz(self) -> Assumption:
+        return "local" if self.params.get("naive_tz", "utc") == "local" else "utc"
 
     def _read_last_ts(self, kind: str, target: object) -> datetime:
         if kind == "file_mtime":
@@ -169,7 +190,10 @@ class JobFreshnessAdapter(Adapter):
                 mtime = os.stat(path).st_mtime
             except OSError as exc:
                 raise JobFreshnessError(f"could not stat {path!r}: {exc}") from exc
-            return datetime.fromtimestamp(mtime)
+            # An mtime is always an unambiguous epoch -- no naive_tz needed.
+            return datetime.fromtimestamp(mtime, tz=UTC)
+
+        naive_tz = self._naive_tz()
 
         if kind == "sqlite_max":
             if not isinstance(target, str) or not target:
@@ -191,7 +215,7 @@ class JobFreshnessAdapter(Adapter):
                 conn.close()
             if not row or row[0] is None:
                 raise JobFreshnessError(f"query against {path!r} returned no timestamp")
-            return _parse_timestamp(row[0])
+            return _parse_timestamp(row[0], naive_tz)
 
         if kind == "command_timestamp":
             if not isinstance(target, list) or not target:
@@ -215,7 +239,7 @@ class JobFreshnessAdapter(Adapter):
             lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
             if not lines:
                 raise JobFreshnessError(f"command {target!r} produced no output")
-            return _parse_timestamp(lines[-1])
+            return _parse_timestamp(lines[-1], naive_tz)
 
         raise JobFreshnessError(f"unknown job_freshness kind {kind!r}")
 
@@ -234,7 +258,7 @@ class JobFreshnessAdapter(Adapter):
         except JobFreshnessError as exc:
             return CheckResult(status=Status.UNKNOWN, detail=str(exc))
 
-        age_s = (ctx.now - last_ts).total_seconds()
+        age_s = age_seconds(ctx.now, last_ts)
         metrics = {"age_s": age_s, "last_ts": last_ts.isoformat()}
 
         if age_s <= max_age_s:
@@ -246,14 +270,17 @@ class JobFreshnessAdapter(Adapter):
             )
 
         windows_raw = self.params.get("expected_windows", []) or []
-        now_t = ctx.now.time()
+        # expected_windows are local wall-clock time-of-day ranges, regardless
+        # of what zone ctx.now happens to carry.
+        now_local = ctx.now.astimezone()
+        now_t = now_local.time()
         for spec in windows_raw:
             try:
                 start, end = _parse_window(str(spec))
             except ValueError:
                 continue
             if _in_window(now_t, start, end):
-                transition_until = _window_end_today(ctx.now, end)
+                transition_until = _window_end_today(now_local, end)
                 return CheckResult(
                     status=Status.EXPECTED_TRANSITION,
                     detail=(

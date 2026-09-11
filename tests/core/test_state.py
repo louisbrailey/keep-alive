@@ -6,6 +6,16 @@ from datetime import datetime
 from pathlib import Path
 
 from keepalive.core.state import Incident, ServiceState, StateStore
+from keepalive.core.timeutil import ensure_aware
+
+
+def _local(*args: int) -> datetime:
+    """A timezone-aware local datetime -- every datetime `state.py` persists
+    is aware (see keepalive.core.timeutil); round-tripping a naive one would
+    only ever exercise the legacy-upgrade path (see
+    test_loading_legacy_naive_iso_string_assumes_local below), not a normal
+    round trip."""
+    return ensure_aware(datetime(*args), "local")
 
 
 def test_service_state_defaults() -> None:
@@ -19,13 +29,13 @@ def test_service_state_defaults() -> None:
 def test_incident_round_trip_through_dict() -> None:
     incident = Incident(
         kind="failure",
-        opened_at=datetime(2026, 1, 1, 0, 0, 0),
+        opened_at=_local(2026, 1, 1, 0, 0, 0),
         attempts=2,
-        next_retry_at=datetime(2026, 1, 1, 0, 5, 0),
-        cooldown_until=datetime(2026, 1, 1, 0, 10, 0),
+        next_retry_at=_local(2026, 1, 1, 0, 5, 0),
+        cooldown_until=_local(2026, 1, 1, 0, 10, 0),
         circuit_open_until=None,
         last_action="restart",
-        last_action_at=datetime(2026, 1, 1, 0, 1, 0),
+        last_action_at=_local(2026, 1, 1, 0, 1, 0),
         last_action_ok=True,
         last_action_detail="ok",
         notified_opened=True,
@@ -38,15 +48,33 @@ def test_service_state_round_trip_through_dict() -> None:
     state = ServiceState(
         name="svc",
         status="failed",
-        last_check_at=datetime(2026, 1, 1, 0, 0, 0),
-        last_healthy_at=datetime(2025, 12, 31, 0, 0, 0),
+        last_check_at=_local(2026, 1, 1, 0, 0, 0),
+        last_healthy_at=_local(2025, 12, 31, 0, 0, 0),
         last_detail="down",
         consecutive_failures=3,
         consecutive_unknown=0,
-        incident=Incident(kind="failure", opened_at=datetime(2026, 1, 1, 0, 0, 0)),
+        incident=Incident(kind="failure", opened_at=_local(2026, 1, 1, 0, 0, 0)),
     )
     restored = ServiceState.from_dict(state.to_dict())
     assert restored == state
+
+
+def test_loading_legacy_naive_iso_string_assumes_local() -> None:
+    """Regression: a state.json written before timestamps became aware
+    everywhere (keepalive.core.timeutil) persisted naive-local ISO strings
+    (no UTC offset). Loading one must assume local -- not silently stay naive
+    (which would later crash comparisons against an aware `now`) and not
+    assume UTC (which would misread the instant in any non-UTC zone)."""
+    legacy_naive = "2026-01-01T00:00:00"
+    state = ServiceState.from_dict(
+        {
+            "name": "svc",
+            "incident": {"kind": "failure", "opened_at": legacy_naive},
+        }
+    )
+    assert state.incident is not None
+    assert state.incident.opened_at == ensure_aware(datetime.fromisoformat(legacy_naive), "local")
+    assert state.incident.opened_at.tzinfo is not None
 
 
 def test_store_load_on_missing_file_returns_empty(tmp_path: Path) -> None:
@@ -63,7 +91,7 @@ def test_store_save_then_load_round_trips(tmp_path: Path) -> None:
             name="svc-b",
             status="failed",
             consecutive_failures=2,
-            incident=Incident(kind="failure", opened_at=datetime(2026, 1, 1)),
+            incident=Incident(kind="failure", opened_at=_local(2026, 1, 1)),
         ),
     }
     store.meta = {"last_cycle_at": "2026-01-01T00:00:00", "last_power": {"on_ac": True}}

@@ -27,6 +27,7 @@ from keepalive.core.adapter import (
     NotifyCondition,
     Status,
 )
+from keepalive.core.timeutil import age_seconds, ensure_aware
 
 LAUNCHCTL = "/bin/launchctl"
 PS = "/bin/ps"
@@ -244,7 +245,8 @@ class LaunchdAdapter(Adapter):
             started_at = datetime.strptime(normalized, _LSTART_FORMAT)
         except ValueError:
             return None
-        return (now - started_at).total_seconds()
+        # `ps -o lstart=` reports naive local wall-clock time.
+        return age_seconds(now, ensure_aware(started_at, "local"))
 
 
 __all__ = ["LaunchdAdapter"]

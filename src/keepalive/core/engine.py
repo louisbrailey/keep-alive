@@ -28,6 +28,7 @@ from keepalive.core.policy import Decision, decide
 from keepalive.core.power import PowerObserver, PowerState
 from keepalive.core.registry import get_adapter_class
 from keepalive.core.state import ServiceState, StateStore
+from keepalive.core.timeutil import ensure_aware, now_aware
 
 #: Grace window applied when an adapter's result would otherwise be a
 #: failure but KeepAlive detected a sleep since the last cycle and the
@@ -52,7 +53,7 @@ def set_kill_switch(settings: KeepAliveSettings, on: bool, reason: str) -> None:
     path = kill_switch_path(settings)
     if on:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{datetime.now().isoformat()} {reason}\n", encoding="utf-8")
+        path.write_text(f"{now_aware().isoformat()} {reason}\n", encoding="utf-8")
     else:
         path.unlink(missing_ok=True)
 
@@ -78,9 +79,13 @@ def _parse_meta_dt(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
+    # A legacy naive-local timestamp persisted before timestamps became
+    # aware everywhere (see keepalive.core.timeutil) is assumed local, same
+    # as the naive-local `datetime.now()` that used to write it.
+    return ensure_aware(parsed, "local")
 
 
 def _build_check_context(
@@ -151,7 +156,7 @@ def run_cycle(
     dry_run: bool = False,
     adapter_factory: Callable[[ServiceConfig], Adapter] | None = None,
 ) -> CycleReport:
-    cycle_now = now if now is not None else datetime.now()
+    cycle_now = now if now is not None else now_aware()
     factory = adapter_factory or _default_adapter_factory
     lock_path = config.keepalive.state_dir / "keepalive.lock"
 
