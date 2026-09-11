@@ -81,11 +81,19 @@ class HttpAdapter(Adapter):
             )
 
         request = urllib.request.Request(url, method="GET")  # noqa: S310 - scheme validated above
+        host = (urlparse(url).hostname or "").lower()
+        loopback = host in {"127.0.0.1", "localhost", "::1"}
+        # Loopback probes never go through a proxy: the default opener consults the
+        # macOS system proxy configuration on every call (slow under load) and a
+        # configured proxy would misroute 127.0.0.1 entirely.
+        opener = (
+            urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            if loopback
+            else urllib.request.build_opener()
+        )
         try:
             # scheme validated above
-            with urllib.request.urlopen(  # noqa: S310  # nosec B310
-                request, timeout=timeout_s
-            ) as response:
+            with opener.open(request, timeout=timeout_s) as response:  # nosec B310
                 status = response.status
                 body = response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
@@ -98,8 +106,6 @@ class HttpAdapter(Adapter):
             # also a failure. Anything else (DNS, unreachable network, remote
             # timeout) means the check could not run: UNKNOWN, never recovery.
             err = str(exc)
-            host = (urlparse(url).hostname or "").lower()
-            loopback = host in {"127.0.0.1", "localhost", "::1"}
             refused = "refused" in err.lower()
             timed_out = "timed out" in err.lower() or isinstance(exc, TimeoutError)
             if refused or (timed_out and loopback):

@@ -1,9 +1,11 @@
-"""HTTP adapter: refused/loopback-timeout are failures; other network errors are UNKNOWN."""
+"""HTTP adapter: refused/loopback-timeout are failures; other network errors are UNKNOWN;
+loopback probes bypass proxies."""
 
 from __future__ import annotations
 
 import urllib.error
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,11 +26,14 @@ def _ctx() -> CheckContext:
     )
 
 
-def _raise(exc: Exception):
+def _opener_raising(exc: Exception):
     def _open(*_a, **_k):
         raise exc
 
-    return _open
+    def _build(*_handlers):
+        return SimpleNamespace(open=_open)
+
+    return _build
 
 
 @pytest.mark.parametrize(
@@ -51,6 +56,31 @@ def _raise(exc: Exception):
 def test_network_error_classification(
     monkeypatch: pytest.MonkeyPatch, url: str, exc: Exception, expected: Status
 ) -> None:
-    monkeypatch.setattr(http_mod.urllib.request, "urlopen", _raise(exc))
+    monkeypatch.setattr(http_mod.urllib.request, "build_opener", _opener_raising(exc))
     r = HttpAdapter({"url": url, "timeout_s": 1, "expect_status": 200}).check(_ctx())
     assert r.status is expected
+
+
+def test_loopback_bypasses_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple] = []
+
+    class _Resp:
+        status = 200
+
+        def read(self) -> bytes:
+            return b"ok"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    def _build(*handlers):
+        seen.append(handlers)
+        return SimpleNamespace(open=lambda *_a, **_k: _Resp())
+
+    monkeypatch.setattr(http_mod.urllib.request, "build_opener", _build)
+    HttpAdapter({"url": "http://127.0.0.1:1/x", "expect_status": 200}).check(_ctx())
+    assert seen and isinstance(seen[0][0], http_mod.urllib.request.ProxyHandler)
+    assert seen[0][0].proxies == {}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import urllib.error
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -52,8 +53,10 @@ def test_validate_params_requires_url() -> None:
 
 def test_healthy_response(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "keepalive.adapters.http.urllib.request.urlopen",
-        lambda req, timeout: _FakeResponse(200, "all good"),
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=(lambda req, timeout: _FakeResponse(200, "all good")): SimpleNamespace(
+            open=_f
+        ),
     )
     adapter = HttpAdapter({"url": "http://127.0.0.1:8787/health", "expect_status": 200})
     result = adapter.check(_ctx(tmp_path))
@@ -62,8 +65,10 @@ def test_healthy_response(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
 def test_wrong_status_is_failed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "keepalive.adapters.http.urllib.request.urlopen",
-        lambda req, timeout: _FakeResponse(500, "server error"),
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=(lambda req, timeout: _FakeResponse(500, "server error")): SimpleNamespace(
+            open=_f
+        ),
     )
     adapter = HttpAdapter({"url": "http://127.0.0.1:8787/health", "expect_status": 200})
     result = adapter.check(_ctx(tmp_path))
@@ -73,8 +78,8 @@ def test_wrong_status_is_failed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
 def test_missing_substring_is_failed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "keepalive.adapters.http.urllib.request.urlopen",
-        lambda req, timeout: _FakeResponse(200, "nope"),
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=(lambda req, timeout: _FakeResponse(200, "nope")): SimpleNamespace(open=_f),
     )
     adapter = HttpAdapter(
         {"url": "http://127.0.0.1:8787/health", "expect_status": 200, "expect_substring": "healthy"}
@@ -87,7 +92,10 @@ def test_http_error_status_checked(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     def _raise(req: Any, timeout: float) -> Any:
         raise urllib.error.HTTPError(req.full_url, 503, "Service Unavailable", {}, None)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _raise)
+    monkeypatch.setattr(
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=_raise: SimpleNamespace(open=_f),
+    )
     adapter = HttpAdapter({"url": "http://127.0.0.1:8787/health", "expect_status": 200})
     result = adapter.check(_ctx(tmp_path))
     assert result.status == Status.FAILED
@@ -98,7 +106,10 @@ def test_connection_refused_is_a_failure(monkeypatch: pytest.MonkeyPatch, tmp_pa
     def _raise(req: Any, timeout: float) -> Any:
         raise urllib.error.URLError(ConnectionRefusedError("refused"))
 
-    monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _raise)
+    monkeypatch.setattr(
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=_raise: SimpleNamespace(open=_f),
+    )
     adapter = HttpAdapter({"url": "http://127.0.0.1:8787/health"})
     result = adapter.check(_ctx(tmp_path))
     assert result.status == Status.FAILED  # nothing is listening: the service is down
@@ -109,7 +120,10 @@ def test_loopback_timeout_is_a_failure(monkeypatch: pytest.MonkeyPatch, tmp_path
     def _raise(req: Any, timeout: float) -> Any:
         raise TimeoutError("timed out")
 
-    monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _raise)
+    monkeypatch.setattr(
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=_raise: SimpleNamespace(open=_f),
+    )
     adapter = HttpAdapter({"url": "http://127.0.0.1:8787/health"})
     result = adapter.check(_ctx(tmp_path))
     assert result.status == Status.FAILED  # a local listener that never answers is down
@@ -120,7 +134,10 @@ def test_remote_timeout_is_unknown(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     def _raise(req: Any, timeout: float) -> Any:
         raise TimeoutError("timed out")
 
-    monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _raise)
+    monkeypatch.setattr(
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=_raise: SimpleNamespace(open=_f),
+    )
     adapter = HttpAdapter({"url": "http://example.invalid/health"})
     result = adapter.check(_ctx(tmp_path))
     assert result.status == Status.UNKNOWN
@@ -133,7 +150,10 @@ def test_unsupported_scheme_is_unknown_and_never_opens(
     def _fail_if_called(req: Any, timeout: float) -> Any:
         raise AssertionError("urlopen must not be called for a non-http(s) url")
 
-    monkeypatch.setattr("keepalive.adapters.http.urllib.request.urlopen", _fail_if_called)
+    monkeypatch.setattr(
+        "keepalive.adapters.http.urllib.request.build_opener",
+        lambda *_h, _f=_fail_if_called: SimpleNamespace(open=_f),
+    )
     adapter = HttpAdapter({"url": "file:///etc/passwd"})
     result = adapter.check(_ctx(tmp_path))
     assert result.status == Status.UNKNOWN
