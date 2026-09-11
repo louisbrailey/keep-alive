@@ -137,7 +137,9 @@ def _apply_wake_grace(
         or not manifest.treat_wake_as_transition
     ):
         return
-    if result.status not in (Status.FAILED, Status.DEGRADED, Status.UNKNOWN):
+    # UNKNOWN means the check itself could not run; it is never a service
+    # failure, so it needs no grace and must not be relabelled a transition.
+    if result.status not in (Status.FAILED, Status.DEGRADED):
         return
     result.status = Status.EXPECTED_TRANSITION
     if result.transition_until is None or result.transition_until <= now:

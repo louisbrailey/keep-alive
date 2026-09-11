@@ -65,6 +65,15 @@ def _read_ac_state() -> tuple[bool | None, int | None]:
     return on_ac, pct
 
 
+_LOG_DOMAIN_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}\s+(\S+)")
+
+
+def _log_domain(line: str) -> str | None:
+    """The pmset event domain ("Sleep", "Wake", "DarkWake", "Assertions", ...)."""
+    match = _LOG_DOMAIN_RE.match(line.strip())
+    return match.group(1) if match else None
+
+
 def _parse_log_timestamp(line: str) -> datetime | None:
     match = _LOG_TS_RE.match(line.strip())
     if not match:
@@ -124,10 +133,14 @@ class PowerObserver:
             ts = ensure_aware(parsed, "local")
             if ts > now or ts < last_cycle_at:
                 continue
-            is_sleep_line = "Sleep" in line and "DarkWake" not in line
-            if is_sleep_line and (last_sleep is None or ts > last_sleep):
+            # Only the event DOMAIN column decides: "Sleep" / "Wake". Substring
+            # matching is wrong — e.g. Assertions lines carry the current time
+            # and the text "PreventUserIdleSystemSleep", and "DarkWake" is
+            # neither a sleep nor a real wake.
+            domain = _log_domain(line)
+            if domain == "Sleep" and (last_sleep is None or ts > last_sleep):
                 last_sleep = ts
-            elif "Wake" in line and (last_wake is None or ts > last_wake):
+            elif domain == "Wake" and (last_wake is None or ts > last_wake):
                 last_wake = ts
         return last_sleep is not None, last_sleep, last_wake, ""
 
