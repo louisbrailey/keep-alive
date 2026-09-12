@@ -531,9 +531,11 @@ def launchd_install(
     log_dir = Path.home() / "Library" / "Logs" / "keepalive"
     bootstrap_cmd = [_LAUNCHCTL, "bootstrap", f"gui/{os.getuid()}", str(_PLIST_DEST)]
 
+    console.print("Rendered plist:")
+    typer.echo(plist_text, nl=False)
     console.print(f"  log dir:    {log_dir}")
     console.print(f"  plist dest: {_PLIST_DEST}")
-    console.print("This will write the rendered plist above, then run:")
+    console.print("This will create the log dir, write the rendered plist above, then run:")
     console.print(f"  {' '.join(bootstrap_cmd)}")
 
     if not yes:
