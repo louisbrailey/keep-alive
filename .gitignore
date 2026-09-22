@@ -10,3 +10,16 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+
+# Local developer tooling and private machine state
+.toolkit-runs/
+.env
+.env.*
+!.env.example
+!.env.worker.example
+*.pem
+*.key
+.DS_Store
+*.sqlite*
+*.db
+*.log

@@ -1,0 +1,7 @@
+config.json
+state.json
+*.tmp
+.config.*
+icon/render/
+icon/KeepAlive.iconset/
+config.json*

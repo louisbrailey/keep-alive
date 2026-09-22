@@ -135,3 +135,13 @@ for running it under launchd.
 Python 3.12, macOS. Dependencies: `typer`, `rich`, stdlib otherwise (`tomllib`,
 `sqlite3`, `urllib`, `fcntl`, `subprocess` with fixed binaries and argument lists
 only — see the threat model).
+
+## macOS control panel
+
+`macos-panel/` contains the separate app/Safari watcher and control panel source.
+The current live copy runs from `~/.keep-alive` with its daemon at `~/bin/keep-tabs-alive.sh`.
+Private configuration and state stay there and are not versioned. See
+[panel instructions](macos-panel/README.md). Changing GitHub source does not deploy it.
+
+Shared development helpers: [developer-toolkit](https://github.com/louisbrailey/developer-toolkit).
+Run `devkit context` for this repository's commands.

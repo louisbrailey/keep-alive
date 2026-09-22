@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keep Alive</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1a1c20; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2563eb; --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --knob: #ffffff; --off: #cbd0d8;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111318; --card: #1b1e25; --text: #e7e9ee; --muted: #9aa1ad; --line: #2a2f3a; --off: #3a404d; --knob: #f2f2f2; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .row .name { flex: 1; min-width: 0; }
+  .row .name .sub { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .switch { position: relative; width: 44px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; background: var(--off); border-radius: 26px; cursor: pointer; transition: .15s; }
+  .switch span::before { content: ""; position: absolute; width: 22px; height: 22px; left: 2px; top: 2px; background: var(--knob); border-radius: 50%; transition: .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::before { transform: translateX(18px); }
+  .master { display: flex; align-items: center; gap: 14px; }
+  .master .big { font-size: 18px; font-weight: 600; }
+  .master .switch { width: 56px; height: 32px; } .master .switch span::before { width: 28px; height: 28px; }
+  .master .switch input:checked + span::before { transform: translateX(24px); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+  .stat .k { color: var(--muted); font-size: 12px; } .stat .v { font-weight: 600; margin-top: 2px; }
+  button { font: inherit; font-size: 13.5px; padding: 7px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button.small { padding: 4px 9px; font-size: 12.5px; color: var(--muted); }
+  input[type=text], input[type=number], select { font: inherit; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .add { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .add input[type=text] { flex: 1; min-width: 140px; }
+  .inline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  pre { background: var(--bg); border-radius: 10px; padding: 12px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow: auto; max-height: 260px; margin: 0; white-space: pre-wrap; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 9px 14px; border-radius: 10px; font-size: 13.5px; opacity: 0; transition: .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .muted { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Keep Alive <small id="host"></small></h1>
+    <div class="inline">
+      <span class="dot" id="svcdot"></span><span class="muted" id="svctxt">…</span>
+    </div>
+  </header>
+
+  <div class="card master">
+    <div style="flex:1">
+      <div class="big">Keep everything running</div>
+      <div class="muted">Holds the Mac awake on power, relaunches apps, reopens tabs.</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="master"><span></span></label>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div class="stats">
+      <div class="stat"><div class="k">Power</div><div class="v" id="power">–</div></div>
+      <div class="stat"><div class="k">Sleep blocked</div><div class="v" id="awake">–</div></div>
+      <div class="stat"><div class="k">Last check</div><div class="v" id="last">–</div></div>
+      <div class="stat"><div class="k">Running since</div><div class="v" id="since">–</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Apps</h2>
+    <div id="apps"></div>
+    <div class="add">
+      <input type="text" id="newapp" placeholder="App name, e.g. Slack" list="applist">
+      <datalist id="applist"></datalist>
+      <button id="addapp">Add app</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Browser tabs</h2>
+    <div id="sites"></div>
+    <div class="add">
+      <input type="text" id="newurl" placeholder="URL to open, e.g. https://example.com/dashboard">
+      <input type="text" id="newmatch" placeholder="Counts as open if URL starts with… (optional)">
+      <button id="addsite">Add tab</button>
+    </div>
+    <div class="inline" style="margin-top:10px">
+      <span class="muted">Browser</span>
+      <select id="browser"><option>Safari</option><option>Google Chrome</option></select>
+      <span class="muted">Check every</span>
+      <input type="number" id="interval" min="15" step="5" style="width:80px"> <span class="muted">seconds</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Discord notifications</h2>
+    <div class="row">
+      <div class="name">Event alerts<div class="sub">App relaunched, tab reopened, power changed, on/off</div></div>
+      <label class="switch"><input type="checkbox" id="events"><span></span></label>
+    </div>
+    <div class="row">
+      <div class="name">Heartbeat<div class="sub">Periodic "still alive" summary. 0 = off</div></div>
+      <input type="number" id="heartbeat" min="0" step="1" style="width:70px"> <span class="muted">hours</span>
+    </div>
+    <div class="row">
+      <div class="name">Webhook<div class="sub" id="whsub">–</div></div>
+      <input type="text" id="webhook" placeholder="Paste a new webhook URL to change" style="width:260px">
+    </div>
+    <div class="actions">
+      <button id="testdiscord">Send test message</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Service</h2>
+    <div class="actions">
+      <button id="restart">Restart service</button>
+      <button id="stop" class="danger">Stop service</button>
+      <button id="start">Start service</button>
+      <button id="openlog">Open full log</button>
+    </div>
+    <p class="muted" style="margin:10px 0 6px">Recent log</p>
+    <pre id="log"></pre>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let cfg = null, dirty = false, saveTimer = null;
+const $ = id => document.getElementById(id);
+const api = (p, body) => fetch(p, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {}).then(r => r.json());
+function toast(m) { const t = $('toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1800); }
+
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    const body = { enabled: cfg.enabled, browser: cfg.browser, check_interval: cfg.check_interval, apps: cfg.apps, sites: cfg.sites,
+                   discord: { events: cfg.discord.events, heartbeat_hours: cfg.discord.heartbeat_hours } };
+    const wh = $('webhook').value.trim();
+    if (wh) { body.discord.webhook = wh; $('webhook').value = ''; }
+    await api('/api/config', body);
+    dirty = false;
+    toast('Saved — applies on next check');
+    refresh();
+  }, 250);
+}
+
+function renderApps(state) {
+  const box = $('apps'); box.innerHTML = '';
+  const st = Object.fromEntries((state.apps || []).map(a => [a.name, a.running]));
+  cfg.apps.forEach((a, i) => {
+    const running = st[a.name];
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = `<span class="dot ${!a.enabled ? '' : running === true ? 'ok' : running === false ? 'warn' : ''}"></span>
+      <div class="name">${esc(a.name)}<div class="sub">${!a.enabled ? 'Not watched' : running === true ? 'Running' : running === false ? 'Relaunching…' : 'Waiting for next check'}</div></div>
+      <button class="small" data-rm="${i}">Remove</button>
+      <label class="switch"><input type="checkbox" data-app="${i}" ${a.enabled ? 'checked' : ''}><span></span></label>`;
+    box.appendChild(row);
+  });
+}
+
+function renderSites(state) {
+  const box = $('sites'); box.innerHTML = '';
+  const st = Object.fromEntries((state.sites || []).map(s => [s.url, s.open]));
+  cfg.sites.forEach((s, i) => {
+    const open = st[s.url];
+    const row = document.createElement('div'); row.className = 'row';
+    const host = (() => { try { return new URL(s.url).host.replace(/^www\./, ''); } catch { return s.url; } })();
+    row.innerHTML = `<span class="dot ${!s.enabled ? '' : open === true ? 'ok' : open === false ? 'warn' : ''}"></span>
+      <div class="name">${esc(host)}<div class="sub">${esc(s.url)}${s.match && s.match !== s.url ? ' · matches ' + esc(s.match) : ''}</div></div>
+      <button class="small" data-rms="${i}">Remove</button>
+      <label class="switch"><input type="checkbox" data-site="${i}" ${s.enabled ? 'checked' : ''}><span></span></label>`;
+    box.appendChild(row);
+  });
+}
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function refresh() {
+  const d = await api('/api/state');
+  if (!cfg || !dirty) cfg = d.config;
+  const s = d.state || {};
+  $('host').textContent = 'local control panel';
+  $('svcdot').className = 'dot ' + (d.service_loaded ? 'ok' : 'bad');
+  $('svctxt').textContent = d.service_loaded ? 'service running' : 'service stopped';
+  $('master').checked = !!cfg.enabled;
+  $('power').textContent = s.power === 'ac' ? '🔌 Plugged in' : s.power === 'battery' ? '🔋 Battery (paused)' : '–';
+  $('awake').textContent = s.awake ? 'Yes' : 'No';
+  $('last').textContent = s.last_check ? s.last_check.slice(11) : '–';
+  $('since').textContent = s.started ? s.started.slice(0, 16) : '–';
+  $('browser').value = cfg.browser || 'Safari';
+  $('interval').value = cfg.check_interval || 60;
+  $('events').checked = !!(cfg.discord && cfg.discord.events);
+  $('heartbeat').value = cfg.discord ? cfg.discord.heartbeat_hours || 0 : 0;
+  $('whsub').textContent = cfg.discord && cfg.discord.webhook_set ? 'Configured · ' + cfg.discord.webhook_masked : 'Not configured';
+  renderApps(s); renderSites(s);
+  $('log').textContent = (d.log || []).slice(-25).join('\n');
+}
+
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.id === 'master') { cfg.enabled = t.checked; dirty = true; save(); }
+  else if (t.dataset.app !== undefined) { cfg.apps[+t.dataset.app].enabled = t.checked; dirty = true; save(); }
+  else if (t.dataset.site !== undefined) { cfg.sites[+t.dataset.site].enabled = t.checked; dirty = true; save(); }
+  else if (t.id === 'browser') { cfg.browser = t.value; dirty = true; save(); }
+  else if (t.id === 'interval') { cfg.check_interval = Math.max(15, +t.value || 60); dirty = true; save(); }
+  else if (t.id === 'events') { cfg.discord.events = t.checked; dirty = true; save(); }
+  else if (t.id === 'heartbeat') { cfg.discord.heartbeat_hours = Math.max(0, +t.value || 0); dirty = true; save(); }
+  else if (t.id === 'webhook') { if (t.value.trim()) { dirty = true; save(); } }
+});
+document.addEventListener('click', async e => {
+  const t = e.target;
+  if (t.dataset.rm !== undefined) { cfg.apps.splice(+t.dataset.rm, 1); dirty = true; save(); }
+  else if (t.dataset.rms !== undefined) { cfg.sites.splice(+t.dataset.rms, 1); dirty = true; save(); }
+  else if (t.id === 'addapp') { const n = $('newapp').value.trim(); if (!n) return; cfg.apps.push({name: n, enabled: true}); $('newapp').value = ''; dirty = true; save(); }
+  else if (t.id === 'addsite') {
+    let u = $('newurl').value.trim(); if (!u) return; if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    const m = $('newmatch').value.trim();
+    cfg.sites.push({url: u, match: m || u, enabled: true}); $('newurl').value = ''; $('newmatch').value = ''; dirty = true; save();
+  }
+  else if (t.id === 'testdiscord') { const r = await api('/api/test-discord', {}); toast(r.ok ? 'Test message sent' : 'Failed: ' + r.error); }
+  else if (t.id === 'restart') { await api('/api/service', {action:'restart'}); toast('Service restarted'); refresh(); }
+  else if (t.id === 'stop') { await api('/api/service', {action:'stop'}); toast('Service stopped'); refresh(); }
+  else if (t.id === 'start') { await api('/api/service', {action:'start'}); toast('Service started'); refresh(); }
+  else if (t.id === 'openlog') { await api('/api/open-log', {}); }
+});
+
+// Suggest installed apps
+api('/api/apps').then(list => { $('applist').innerHTML = list.map(n => `<option value="${esc(n)}">`).join(''); });
+refresh();
+setInterval(() => { if (!dirty) refresh(); }, 5000);
+
+// Ask for confirmation before the panel tab is closed or navigated away.
+window.addEventListener('beforeunload', e => { e.preventDefault(); e.returnValue = 'Close the Keep Alive control panel?'; return e.returnValue; });
+</script>
+</body>
+</html>

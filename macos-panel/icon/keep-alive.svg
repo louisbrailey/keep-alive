@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f1b2d"/>
+      <stop offset="0.55" stop-color="#0b2a3a"/>
+      <stop offset="1" stop-color="#062a24"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.12"/>
+    </linearGradient>
+    <linearGradient id="pulse" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="0.5" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#34d399" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#34d399" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blur" x="-20%" y="-50%" width="140%" height="200%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <clipPath id="clip"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+  </defs>
+
+  <!-- squircle body -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)" filter="url(#shadow)"/>
+  <g clip-path="url(#clip)">
+    <!-- soft glow behind the pulse -->
+    <ellipse cx="512" cy="530" rx="360" ry="150" fill="url(#glow)"/>
+    <!-- faint grid lines, like a monitor -->
+    <g stroke="#7dd3fc" stroke-opacity="0.07" stroke-width="3">
+      <path d="M100 330H924M100 430H924M100 530H924M100 630H924M100 730H924"/>
+      <path d="M270 100V924M390 100V924M512 100V924M634 100V924M754 100V924"/>
+    </g>
+    <!-- pulse line glow -->
+    <path d="M150 530 H360 L420 530 L470 380 L530 690 L585 470 L625 530 H874"
+          fill="none" stroke="#34d399" stroke-opacity="0.6" stroke-width="44"
+          stroke-linecap="round" stroke-linejoin="round" filter="url(#blur)"/>
+    <!-- pulse line -->
+    <path d="M150 530 H360 L420 530 L470 380 L530 690 L585 470 L625 530 H874"
+          fill="none" stroke="url(#pulse)" stroke-width="30"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- live dot at the end of the trace -->
+    <circle cx="874" cy="530" r="34" fill="#34d399" fill-opacity="0.35"/>
+    <circle cx="874" cy="530" r="19" fill="#d1fae5"/>
+    <!-- gloss -->
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#sheen)"/>
+  </g>
+</svg>

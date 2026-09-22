@@ -1,0 +1,10 @@
+# Search exclusions only; does not remove tracked Git files.
+.toolkit-runs/
+node_modules/
+.venv/
+output/
+outputs/
+dist/
+build/
+.claude/
+.openai/

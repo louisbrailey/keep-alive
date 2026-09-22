@@ -1,0 +1,15 @@
+{
+  "project": "Keep Alive",
+  "entry_points": [
+    "README.md",
+    "ARCHITECTURE.md",
+    "THREAT_MODEL.md",
+    "macos-panel/README.md"
+  ],
+  "commands": {
+    "setup": "uv sync --frozen",
+    "test": "uv run pytest --no-cov -q",
+    "lint": "uv run ruff check src tests",
+    "panel_syntax": "python3 -m py_compile macos-panel/panel.py"
+  }
+}
